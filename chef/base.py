@@ -1,5 +1,5 @@
+import abc
 import collections
-
 import pkg_resources
 
 from chef.api import ChefAPI
@@ -64,11 +64,18 @@ class ChefObject(object):
 
     def _populate(self, data):
         for name, cls in self.__class__.attributes.iteritems():
-            if name in data:
-                value = cls(data[name])
+          print "Name"
+          print name
+          print "Class"
+          print cls
+          if name in data:  
+            if isinstance(cls, abc.ABCMeta):
+              value = cls((data[name]), write=data[name])
             else:
-                value = cls()
-            setattr(self, name, value)
+              value = cls((data[name]))
+          else:
+              value = cls()
+          setattr(self, name, value)
 
     @classmethod
     def from_search(cls, data, api=None):
