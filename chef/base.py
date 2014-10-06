@@ -139,3 +139,125 @@ class ChefObject(object):
         # serialization perhaps).
         if api and cls.api_version_parsed > api.version_parsed:
             raise ChefAPIVersionError, "Class %s is not compatible with API version %s" % (cls.__name__, api.version)
+
+class ChefObjectAttributes(collections.MutableMapping):
+    """A collection of Chef Object attributes.
+
+    Attributes can be accessed like a normal python :class:`dict`::
+
+        print environment['fqdn']
+        environment['apache']['log_dir'] = '/srv/log'
+
+    When writing to new attributes, any dicts required in the hierarchy are
+    created automatically.
+
+    .. versionadded:: 0.1
+    """
+
+    def __init__(self, search_path=[], path=None, write=None):
+        if not isinstance(search_path, collections.Sequence):
+            search_path = [search_path]
+        self.search_path = search_path
+        self.path = path or ()
+        self.write = write
+
+    def __iter__(self):
+        keys = set()
+        for d in self.search_path:
+            keys |= set(d.iterkeys())
+        return iter(keys)
+
+    def __len__(self):
+        l = 0
+        for key in self:
+            l += 1
+        return l
+
+    def __getitem__(self, key):
+        for d in self.search_path:
+            if key in d:
+                value = d[key]
+                break
+        else:
+            raise KeyError(key)
+        if not isinstance(value, dict):
+            return value
+        new_search_path = []
+        for d in self.search_path:
+            new_d = d.get(key, {})
+            if not isinstance(new_d, dict):
+                # Structural mismatch
+                new_d = {}
+            new_search_path.append(new_d)
+        return self.__class__(new_search_path, self.path+(key,), write=self.write)
+
+    def __setitem__(self, key, value):
+        if self.write is None:
+            raise ChefError('This attribute is not writable')
+        dest = self.write
+        for path_key in self.path:
+            dest = dest.setdefault(path_key, {})
+        dest[key] = value
+
+    def __delitem__(self, key):
+        if self.write is None:
+            raise ChefError('This attribute is not writable')
+        dest = self.write
+        for path_key in self.path:
+            dest = dest.setdefault(path_key, {})
+        del dest[key]
+
+    def has_dotted(self, key):
+        """Check if a given dotted key path is present. See :meth:`.get_dotted`
+        for more information on dotted paths.
+
+        .. versionadded:: 0.2
+        """
+        try:
+            self.get_dotted(key)
+        except KeyError:
+            return False
+        else:
+            return True
+
+    def get_dotted(self, key):
+        """Retrieve an attribute using a dotted key path. A dotted path
+        is a string of the form `'foo.bar.baz'`, with each `.` separating
+        hierarcy levels.
+
+        Example::
+
+            environment.attributes['apache']['log_dir'] = '/srv/log'
+            print environment.attributes.get_dotted('apache.log_dir')
+        """
+        value = self
+        for k in key.split('.'):
+            if not isinstance(value, ChefObjectAttributes):
+                raise KeyError(key)
+            value = value[k]
+        return value
+
+    def set_dotted(self, key, value):
+        """Set an attribute using a dotted key path. See :meth:`.get_dotted`
+        for more information on dotted paths.
+
+        Example::
+
+            environment.attributes.set_dotted('apache.log_dir', '/srv/log')
+        """
+        dest = self
+        keys = key.split('.')
+        last_key = keys.pop()
+        for k in keys:
+            if k not in dest:
+                dest[k] = {}
+            dest = dest[k]
+            if not isinstance(dest, ChefObjectAttributes):
+                raise ChefError
+        dest[last_key] = value
+
+    def to_dict(self):
+        merged = {}
+        for d in reversed(self.search_path):
+            merged.update(d)
+        return merged
